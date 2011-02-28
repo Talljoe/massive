@@ -9,6 +9,13 @@ using System.Linq;
 using System.Reflection;
 using System.Text.RegularExpressions;
 namespace Massive {
+    [AttributeUsage(AttributeTargets.Property, AllowMultiple = false)]
+    public class ColumnIgnoreAttribute : Attribute { }
+    [AttributeUsage(AttributeTargets.Property, AllowMultiple = false)]
+    public class ColumnNameAttribute : Attribute {
+        public string Name { get; set; }
+        public ColumnNameAttribute(string name) { Name = name; }
+    }
     public static class ObjectExtensions {
         /// <summary> Extension method for performing an action against all elements. </summary>
         public static void ForEach<T>(this IEnumerable<T> collection, Action<T> action) { foreach (var item in collection) action(item); }
@@ -26,14 +33,11 @@ namespace Massive {
                     p.DbType = DbType.String;
                     p.Size = 4000;
                 }else if(item.GetType()==typeof(ExpandoObject)){
-                    var d = (IDictionary<string, object>)item;
-                    p.Value = d.Values.FirstOrDefault();
+                    p.Value = ((IDictionary<string, object>)item).Values.FirstOrDefault();
                 } else {
                     p.Value = item;
                 }
-                //from DataChomp
-                if (item.GetType() == typeof(string))
-                    p.Size = 4000;
+                if (item.GetType() == typeof(string)) p.Size = 4000; //from DataChomp
             }
             cmd.Parameters.Add(p);
         }
@@ -155,41 +159,31 @@ namespace Massive {
         public string TableName { get; set; }
         /// <summary>
         /// Builds a set of Insert and Update commands based on the passed-on objects.
-        /// These objects can be POCOs, Anonymous, NameValueCollections, or Expandos. Objects
-        /// With a PK property (whatever PrimaryKeyField is set to) will be created at UPDATEs
+        /// These objects can be POCOs, Anonymous, NameValueCollections, or Expandos. Objects With a PK property (whatever PrimaryKeyField is set to) will be created at UPDATEs
         /// </summary>
         public List<DynamicCommand> BuildCommands(params object[] things) { return BuildCommandsWithWhitelist(null, things); }
         /// <summary>
         /// Builds a set of Insert and Update commands based on the passed-on objects.
-        /// These objects can be POCOs, Anonymous, NameValueCollections, or Expandos. Objects
-        /// With a PK property (whatever PrimaryKeyField is set to) will be created at UPDATEs
+        /// These objects can be POCOs, Anonymous, NameValueCollections, or Expandos. Objects With a PK property (whatever PrimaryKeyField is set to) will be created at UPDATEs
         /// </summary>
         public List<DynamicCommand> BuildCommandsWithWhitelist(object whitelist, params object[] things) {
             return things.Select(item => HasPrimaryKey(item) ? CreateUpdateCommand(item,GetPrimaryKey(item),whitelist) : CreateInsertCommand(item,whitelist)).ToList();
         }
         /// <summary>
         /// Executes a set of objects as Insert or Update commands based on their property settings, within a transaction.
-        /// These objects can be POCOs, Anonymous, NameValueCollections, or Expandos. Objects
-        /// With a PK property (whatever PrimaryKeyField is set to) will be created at UPDATEs
+        /// These objects can be POCOs, Anonymous, NameValueCollections, or Expandos. Objects With a PK property (whatever PrimaryKeyField is set to) will be created at UPDATEs
         /// </summary>
         public int Save(params object[] things) { return SaveWithWhitelist(null, things); }
         /// <summary>
         /// Executes a set of objects as Insert or Update commands based on their property settings, within a transaction.
-        /// These objects can be POCOs, Anonymous, NameValueCollections, or Expandos. Objects
-        /// With a PK property (whatever PrimaryKeyField is set to) will be created at UPDATEs
+        /// These objects can be POCOs, Anonymous, NameValueCollections, or Expandos. Objects With a PK property (whatever PrimaryKeyField is set to) will be created at UPDATEs
         /// </summary>
         public int SaveWithWhitelist(object whitelist, params object[] things) {
             return Database.Execute(BuildCommandsWithWhitelist(whitelist, things), transaction: true);
         }
-        /// <summary>
-        /// Conventionally introspects the object passed in for a field that 
-        /// looks like a PK. If you've named your PrimaryKeyField, this becomes easy
-        /// </summary>
+        /// <summary> Conventionally introspects the object passed in for a field that  looks like a PK. If you've named your PrimaryKeyField, this becomes easy </summary>
         public bool HasPrimaryKey(object o) { return o.ToDictionary().ContainsKey(PrimaryKeyField); }
-        /// <summary>
-        /// If the object passed in has a property with the same name as your PrimaryKeyField
-        /// it is returned here.
-        /// </summary>
+        /// <summary> If the object passed in has a property with the same name as your PrimaryKeyField it is returned here. </summary>
         public object GetPrimaryKey(object o) {
             object result;
             o.ToDictionary().TryGetValue(PrimaryKeyField, out result);
@@ -225,16 +219,22 @@ namespace Massive {
         }
         private static IEnumerable<KeyValuePair<string,object>> FilterItems(object o, object whitelist) {
             IEnumerable<KeyValuePair<string, object>> settings = o.ToDictionary();
-            var whitelistValues = GetColumns(whitelist).Select(s => s.Trim());
+            var whitelistValues = GetColumns(whitelist).Select(s => s.Split(new[]{' ','[',']'}, StringSplitOptions.RemoveEmptyEntries).Last());
             if (!string.Equals("*", whitelistValues.FirstOrDefault(), StringComparison.Ordinal))
                 settings = settings.Join(whitelistValues, s => s.Key.Trim(), w => w, (s,_) => s, StringComparer.OrdinalIgnoreCase);
             return settings;
         }
+        private static string GetColumn(string propertyName, string columnName){
+            return (columnName == null) ? "[" + propertyName.Trim('[', ']') + "]" : string.Format("[{0}] AS [{1}]", columnName.Trim('[', ']'), propertyName.Trim('[', ']'));
+        }
         private static IEnumerable<string> GetColumns(object columns) {
             return (columns == null)   ? new[]{"*"} :
                    (columns is string) ? ((string)columns).Split(new[]{','}, StringSplitOptions.RemoveEmptyEntries) : 
-                   (columns is Type)   ? ((Type)columns).GetProperties(BindingFlags.GetProperty | BindingFlags.Public | BindingFlags.Instance).Select(prop => prop.Name)
-                                       : (columns as IEnumerable<string>) ?? columns.ToDictionary().Select(kvp => kvp.Key);
+                   (columns is Type)   ? ((Type)columns).GetProperties(BindingFlags.GetProperty | BindingFlags.Public | BindingFlags.Instance)
+                                                        .Where(prop => !prop.GetCustomAttributes(typeof(ColumnIgnoreAttribute), true).Any())
+                                                        .Select(property => GetColumn(property.Name, property.GetCustomAttributes(typeof(ColumnNameAttribute), false).Cast<ColumnNameAttribute>()
+                                                                                                             .Select(column => column.Name).FirstOrDefault()))
+                                       : (columns as IEnumerable<string>) ?? columns.ToDictionary().Select(kvp => GetColumn(kvp.Key, kvp.Value as string));
         }
         private DynamicCommand BuildCommand(string sql, object key = null, object where = null, params object[] args) {
             var command = new DynamicCommand { Sql = sql };
@@ -283,7 +283,7 @@ namespace Massive {
         public DynamicPagedResult Paged(object where = null, string orderBy = "", object columns = null, int pageSize = 20, int currentPage =1, params object[] args) {
             var countSql = string.Format("SELECT COUNT({0}) FROM {1}", PrimaryKeyField, TableName);
             if (String.IsNullOrEmpty(orderBy)) orderBy = PrimaryKeyField;
-            var sql = string.Format("SELECT {0} FROM (SELECT ROW_NUMBER() OVER (ORDER BY {1}) AS Row, {0} FROM {2}) AS Paged", string.Join(",", GetColumns(columns)), orderBy, TableName);
+            var sql = string.Format("SELECT * FROM (SELECT ROW_NUMBER() OVER (ORDER BY {1}) AS Row, {0} FROM {2}) AS Paged", string.Join(",", GetColumns(columns)), orderBy, TableName);
             var pageStart = (currentPage -1) * pageSize;
             sql+= string.Format(" WHERE Row >={0} AND Row <={1}",pageStart, (pageStart + pageSize));
             var queryCommand = BuildCommand(sql, where: where, args: args);
