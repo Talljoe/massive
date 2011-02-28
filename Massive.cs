@@ -134,7 +134,7 @@ namespace Massive {
         }
         /// <summary> Gets a table in the database. </summary>
         public DynamicModel GetTable(string tableName, string primaryKeyField = "") { return new DynamicModel(this, tableName, primaryKeyField); }
-        /// <summary> Returns a dynamic database scoped to a single connection. </summary>
+        /// <summary> Returns a database connection. </summary>
         public DbConnection OpenConnection() {
             var conn = _factory.CreateConnection();
             conn.ConnectionString = _connectionString;
