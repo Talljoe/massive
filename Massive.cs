@@ -191,13 +191,11 @@ namespace Massive {
         }
         private string MapPrimaryKey(object o) {
             return o.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                              .Where(prop => prop.GetCustomAttributes(typeof (ColumnNameAttribute), false).Cast<ColumnNameAttribute>()
-                                                 .Any(column => column.Name.Equals(PrimaryKeyField))).Select(prop => prop.Name).FirstOrDefault()
+                              .Where(prop => prop.GetCustomAttributes(typeof(ColumnNameAttribute), false).Cast<ColumnNameAttribute>().Any(column => column.Name.Equals(PrimaryKeyField)))
+                              .Select(prop => prop.Name).FirstOrDefault()
                 ?? PrimaryKeyField;
         }
-        /// <summary>
-        /// Creates a command for use with transactions - internal stuff mostly, but here for you to play with
-        /// </summary>
+        /// <summary> Creates a command for use with transactions - internal stuff mostly, but here for you to play with </summary>
         public DynamicCommand CreateInsertCommand(object o, object whitelist = null) {
             const string stub = "INSERT INTO {0} ({1}) \r\n VALUES ({2}); SELECT @@IDENTITY AS NewID";
             var items = FilterItems(o, whitelist).ToList();
@@ -208,9 +206,7 @@ namespace Massive {
             }
             throw new InvalidOperationException("Can't parse this object to the database - there are no properties set");
         }
-        /// <summary>
-        /// Creates a command for use with transactions - internal stuff mostly, but here for you to play with
-        /// </summary>
+        /// <summary> Creates a command for use with transactions - internal stuff mostly, but here for you to play with </summary>
         public DynamicCommand CreateUpdateCommand(object o, object key, object whitelist = null) {
             const string stub = "UPDATE {0} SET {1} WHERE {2} = @{3}";
             var items = FilterItems(o, whitelist).Where(item => !item.Key.Equals(MapPrimaryKey(o), StringComparison.CurrentCultureIgnoreCase) && item.Value != null).ToList();
@@ -225,7 +221,7 @@ namespace Massive {
         }
         private static IEnumerable<KeyValuePair<string,object>> FilterItems(object o, object whitelist) {
             IEnumerable<KeyValuePair<string, object>> settings = o.ToDictionary();
-            var whitelistValues = GetColumns(whitelist).Select(s => s.Split(new[]{' ','[',']'}, StringSplitOptions.RemoveEmptyEntries).Last());
+            var whitelistValues = GetColumns(whitelist).Split(',').Select(s => s.Split(new[]{' ','[',']'}, StringSplitOptions.RemoveEmptyEntries).Last());
             if (!string.Equals("*", whitelistValues.FirstOrDefault(), StringComparison.Ordinal))
                 settings = settings.Join(whitelistValues, s => s.Key.Trim(), w => w, (s,_) => s, StringComparer.OrdinalIgnoreCase);
             return settings;
@@ -233,14 +229,14 @@ namespace Massive {
         private static string GetColumn(string propertyName, string columnName){
             return (columnName == null) ? "[" + propertyName.Trim('[', ']') + "]" : string.Format("[{0}] AS [{1}]", columnName.Trim('[', ']'), propertyName.Trim('[', ']'));
         }
-        private static IEnumerable<string> GetColumns(object columns) {
-            return (columns == null)   ? new[]{"*"} :
-                   (columns is string) ? ((string)columns).Split(new[]{','}, StringSplitOptions.RemoveEmptyEntries) : 
-                   (columns is Type)   ? ((Type)columns).GetProperties(BindingFlags.GetProperty | BindingFlags.Public | BindingFlags.Instance)
-                                                        .Where(prop => !prop.GetCustomAttributes(typeof(ColumnIgnoreAttribute), true).Any())
-                                                        .Select(property => GetColumn(property.Name, property.GetCustomAttributes(typeof(ColumnNameAttribute), false).Cast<ColumnNameAttribute>()
-                                                                                                             .Select(column => column.Name).FirstOrDefault()))
-                                       : (columns as IEnumerable<string>) ?? columns.ToDictionary().Select(kvp => GetColumn(kvp.Key, kvp.Value as string));
+        private static string GetColumns(object columns) {
+            return (columns == null) ? "*" : (columns as string)
+                ?? string.Join(",",
+                     (columns is Type) ? ((Type)columns).GetProperties(BindingFlags.GetProperty | BindingFlags.Public | BindingFlags.Instance)
+                                                        .Where(prop => !prop.GetCustomAttributes(typeof(ColumnIgnoreAttribute), false).Any())
+                                                        .Select(property => GetColumn(property.Name, property.GetCustomAttributes(typeof(ColumnNameAttribute), false).Cast<ColumnNameAttribute>().Select(column => column.Name).FirstOrDefault()))
+                                       : (columns as IEnumerable<string>) ?? columns.ToDictionary().Select(kvp => GetColumn(kvp.Key, kvp.Value as string))
+                   );
         }
         private DynamicCommand BuildCommand(string sql, object key = null, object where = null, params object[] args) {
             var command = new DynamicCommand { Sql = sql };
@@ -264,13 +260,11 @@ namespace Massive {
             return BuildCommand(string.Format("DELETE FROM {0}", TableName), key, where, args);
         }
         /// <summary>
-        /// Adds a record to the database. You can pass in an Anonymous object, an ExpandoObject,
-        /// A regular old POCO, or a NameValueColletion from a Request.Form or Request.QueryString
+        /// Adds a record to the database. You can pass in an Anonymous object, an ExpandoObject, A regular old POCO, or a NameValueColletion from a Request.Form or Request.QueryString
         /// </summary>
         public object Insert(object o, object whitelist = null) { return Database.Scalar(CreateInsertCommand(o, whitelist)); }
         /// <summary>
-        /// Updates a record in the database. You can pass in an Anonymous object, an ExpandoObject,
-        /// A regular old POCO, or a NameValueCollection from a Request.Form or Request.QueryString
+        /// Updates a record in the database. You can pass in an Anonymous object, an ExpandoObject, A regular old POCO, or a NameValueCollection from a Request.Form or Request.QueryString
         /// </summary>
         public int Update(object o, object key, object whitelist = null) { return Database.Execute(CreateUpdateCommand(o, key, whitelist)); }
         /// <summary> Removes one or more records from the DB according to the passed-in WHERE </summary>
@@ -279,7 +273,7 @@ namespace Massive {
         /// Returns all records complying with the passed-in WHERE clause and arguments,  ordered as specified, limited (TOP) by limit.
         /// </summary>
         public IEnumerable<dynamic> All(object where = null, string orderBy = "", int limit = 0, object columns = null, params object[] args) {
-            var sql = String.Format(limit > 0 ? "SELECT TOP " + limit + " {0} FROM {1}" : "SELECT {0} FROM {1}", String.Join(",", GetColumns(columns)), TableName);
+            var sql = String.Format(limit > 0 ? "SELECT TOP " + limit + " {0} FROM {1}" : "SELECT {0} FROM {1}", GetColumns(columns), TableName);
             var command = BuildCommand(sql, where: where, args: args);
             if (!String.IsNullOrEmpty(orderBy))
                 command.Sql += (orderBy.Trim().StartsWith("order by", StringComparison.CurrentCultureIgnoreCase) ? " " : " ORDER BY ") + orderBy;
@@ -289,7 +283,7 @@ namespace Massive {
         public DynamicPagedResult Paged(object where = null, string orderBy = "", object columns = null, int pageSize = 20, int currentPage =1, params object[] args) {
             var countSql = string.Format("SELECT COUNT({0}) FROM {1}", PrimaryKeyField, TableName);
             if (String.IsNullOrEmpty(orderBy)) orderBy = PrimaryKeyField;
-            var sql = string.Format("SELECT * FROM (SELECT ROW_NUMBER() OVER (ORDER BY {1}) AS Row, {0} FROM {2}) AS Paged", string.Join(",", GetColumns(columns)), orderBy, TableName);
+            var sql = string.Format("SELECT * FROM (SELECT ROW_NUMBER() OVER (ORDER BY {1}) AS Row, {0} FROM {2}) AS Paged", GetColumns(columns), orderBy, TableName);
             var pageStart = (currentPage -1) * pageSize;
             sql+= string.Format(" WHERE Row >={0} AND Row <={1}",pageStart, (pageStart + pageSize));
             var queryCommand = BuildCommand(sql, where: where, args: args);
@@ -299,7 +293,7 @@ namespace Massive {
         }
         /// <summary> Returns a single row from the database </summary>
         public dynamic Single(object key = null, object where = null, object columns = null) {
-            var sql = string.Format("SELECT {0} FROM {1}", string.Join(",", GetColumns(columns)), TableName);
+            var sql = string.Format("SELECT {0} FROM {1}", GetColumns(columns), TableName);
             return Database.Fetch(BuildCommand(sql, key, where)).FirstOrDefault();
         }
     }
