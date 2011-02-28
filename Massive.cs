@@ -182,12 +182,18 @@ namespace Massive {
             return Database.Execute(BuildCommandsWithWhitelist(whitelist, things), transaction: true);
         }
         /// <summary> Conventionally introspects the object passed in for a field that  looks like a PK. If you've named your PrimaryKeyField, this becomes easy </summary>
-        public bool HasPrimaryKey(object o) { return o.ToDictionary().ContainsKey(PrimaryKeyField); }
+        public bool HasPrimaryKey(object o) { return o.ToDictionary().ContainsKey(MapPrimaryKey(o)); }
         /// <summary> If the object passed in has a property with the same name as your PrimaryKeyField it is returned here. </summary>
         public object GetPrimaryKey(object o) {
             object result;
-            o.ToDictionary().TryGetValue(PrimaryKeyField, out result);
+            o.ToDictionary().TryGetValue(MapPrimaryKey(o), out result);
             return result;
+        }
+        private string MapPrimaryKey(object o) {
+            return o.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                              .Where(prop => prop.GetCustomAttributes(typeof (ColumnNameAttribute), false).Cast<ColumnNameAttribute>()
+                                                 .Any(column => column.Name.Equals(PrimaryKeyField))).Select(prop => prop.Name).FirstOrDefault()
+                ?? PrimaryKeyField;
         }
         /// <summary>
         /// Creates a command for use with transactions - internal stuff mostly, but here for you to play with
@@ -207,7 +213,7 @@ namespace Massive {
         /// </summary>
         public DynamicCommand CreateUpdateCommand(object o, object key, object whitelist = null) {
             const string stub = "UPDATE {0} SET {1} WHERE {2} = @{3}";
-            var items = FilterItems(o, whitelist).Where(item => !item.Key.Equals(PrimaryKeyField, StringComparison.CurrentCultureIgnoreCase) && item.Value != null).ToList();
+            var items = FilterItems(o, whitelist).Where(item => !item.Key.Equals(MapPrimaryKey(o), StringComparison.CurrentCultureIgnoreCase) && item.Value != null).ToList();
             if (items.Any()) {
                 var keys = string.Join(",", items.Select((item, i) => string.Format("{0} = @{1} \r\n", item.Key, i)));
                 return new DynamicCommand {
