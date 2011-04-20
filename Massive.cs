@@ -208,9 +208,8 @@ namespace Massive {
             if(where == null) return command;
             var whereString = where as string;
             if (whereString != null) {
-                var whereRegex = new Regex(@"^where ", RegexOptions.IgnoreCase);
-                var keyword = whereRegex.IsMatch(sql.Trim()) ? " AND " : " WHERE ";
-                command.CommandText +=  keyword + whereString.Replace(whereString.Trim(), String.Empty);
+                var keyword = Regex.IsMatch(sql, " WHERE ", RegexOptions.IgnoreCase) ? " AND " : " WHERE ";
+                command.CommandText += keyword + Regex.Replace(whereString.Trim(), @"^where ", String.Empty, RegexOptions.IgnoreCase);
                 command.AddParams(args);
             } else {
                 var dict = where.ToDictionary();
